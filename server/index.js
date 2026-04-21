@@ -121,6 +121,23 @@ function cleanupStore(store) {
   store.oauthStates = (store.oauthStates || []).filter((s) => new Date(s.expiresAt).getTime() > now && !s.usedAt);
 }
 
+let storeWriteQueue = Promise.resolve();
+
+async function withStoreWriteLock(task) {
+  const previous = storeWriteQueue;
+  let release;
+  storeWriteQueue = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  await previous;
+  try {
+    return await task();
+  } finally {
+    release();
+  }
+}
+
 async function handleRegister(req, res) {
   const body = await parseBody(req);
   const email = sanitizeEmail(body.email);
@@ -137,31 +154,72 @@ async function handleRegister(req, res) {
     return badRequest(res, 'VALIDATION_ERROR', 'Datos invalidos', fieldErrors);
   }
 
-  const store = await readStore();
-  cleanupStore(store);
+  return withStoreWriteLock(async () => {
+    const store = await readStore();
+    cleanupStore(store);
 
-  const existingUser = store.users.find((u) => u.email === email);
+    const existingUser = store.users.find((u) => u.email === email);
 
-  if (existingUser) {
-    if (existingUser.emailVerified) {
-      return sendJson(res, 409, {
-        error: {
-          code: 'EMAIL_ALREADY_EXISTS',
-          message: 'No se pudo completar el registro'
-        }
+    if (existingUser) {
+      if (existingUser.emailVerified) {
+        return sendJson(res, 409, {
+          error: {
+            code: 'EMAIL_ALREADY_EXISTS',
+            message: 'No se pudo completar el registro'
+          }
+        });
+      }
+
+      if (existingUser.oauthProvider === 'google' && !existingUser.passwordHash) {
+        return sendJson(res, 409, {
+          error: {
+            code: 'GOOGLE_ACCOUNT',
+            message: 'Este correo ya existe con acceso de Google. Usa el boton de Google para entrar.'
+          }
+        });
+      }
+
+      existingUser.passwordHash = await hashPassword(password);
+
+      const code = randomCode(6);
+      const now = nowIso();
+      store.verificationCodes = store.verificationCodes.filter((v) => v.email !== email || v.usedAt);
+      store.verificationCodes.push({
+        id: createId('verify'),
+        email,
+        codeHash: hashCode(code),
+        createdAt: now,
+        expiresAt: addMinutes(now, config.verificationTtlMinutes),
+        attempts: 0,
+        usedAt: null,
+        resendAllowedAt: addMinutes(now, config.resendCooldownSeconds / 60)
+      });
+
+      await writeStore(store);
+      await sendVerificationCode({ email, code });
+
+      return sendJson(res, 200, {
+        userId: existingUser.id,
+        email,
+        requiresVerification: true,
+        resendAfterSeconds: config.resendCooldownSeconds
       });
     }
 
-    if (existingUser.oauthProvider === 'google' && !existingUser.passwordHash) {
-      return sendJson(res, 409, {
-        error: {
-          code: 'GOOGLE_ACCOUNT',
-          message: 'Este correo ya existe con acceso de Google. Usa el boton de Google para entrar.'
-        }
-      });
-    }
-
-    existingUser.passwordHash = await hashPassword(password);
+    const userId = createId('user');
+    const passwordHash = await hashPassword(password);
+    const user = {
+      id: userId,
+      email,
+      passwordHash,
+      oauthProvider: 'local',
+      googleSub: null,
+      displayName: null,
+      avatarUrl: null,
+      emailVerified: false,
+      createdAt: nowIso()
+    };
+    store.users.push(user);
 
     const code = randomCode(6);
     const now = nowIso();
@@ -180,51 +238,12 @@ async function handleRegister(req, res) {
     await writeStore(store);
     await sendVerificationCode({ email, code });
 
-    return sendJson(res, 200, {
-      userId: existingUser.id,
+    return sendJson(res, 201, {
+      userId,
       email,
       requiresVerification: true,
       resendAfterSeconds: config.resendCooldownSeconds
     });
-  }
-
-  const userId = createId('user');
-  const passwordHash = await hashPassword(password);
-  const user = {
-    id: userId,
-    email,
-    passwordHash,
-    oauthProvider: 'local',
-    googleSub: null,
-    displayName: null,
-    avatarUrl: null,
-    emailVerified: false,
-    createdAt: nowIso()
-  };
-  store.users.push(user);
-
-  const code = randomCode(6);
-  const now = nowIso();
-  store.verificationCodes = store.verificationCodes.filter((v) => v.email !== email || v.usedAt);
-  store.verificationCodes.push({
-    id: createId('verify'),
-    email,
-    codeHash: hashCode(code),
-    createdAt: now,
-    expiresAt: addMinutes(now, config.verificationTtlMinutes),
-    attempts: 0,
-    usedAt: null,
-    resendAllowedAt: addMinutes(now, config.resendCooldownSeconds / 60)
-  });
-
-  await writeStore(store);
-  await sendVerificationCode({ email, code });
-
-  return sendJson(res, 201, {
-    userId,
-    email,
-    requiresVerification: true,
-    resendAfterSeconds: config.resendCooldownSeconds
   });
 }
 
@@ -233,61 +252,63 @@ async function handleLogin(req, res) {
   const email = sanitizeEmail(body.email);
   const password = String(body.password || '');
 
-  const store = await readStore();
-  cleanupStore(store);
+  return withStoreWriteLock(async () => {
+    const store = await readStore();
+    cleanupStore(store);
 
-  const user = store.users.find((u) => u.email === email);
-  if (user && !user.passwordHash) {
-    return sendJson(res, 401, {
-      error: {
-        code: 'GOOGLE_ACCOUNT',
-        message: 'Esta cuenta usa acceso con Google. Usa el boton de Google para iniciar sesion.'
-      }
-    });
-  }
-  const passwordOk = user ? await verifyPassword(password, user.passwordHash) : false;
-
-  if (!user || !passwordOk) {
-    return sendJson(res, 401, {
-      error: {
-        code: 'INVALID_CREDENTIALS',
-        message: 'Credenciales invalidas'
-      }
-    });
-  }
-
-  if (!user.emailVerified) {
-    return sendJson(res, 403, {
-      error: {
-        code: 'EMAIL_NOT_VERIFIED',
-        message: 'Debes verificar tu correo antes de continuar'
-      },
-      requiresVerification: true,
-      email: user.email
-    });
-  }
-
-  const now = nowIso();
-  const token = createId('session');
-  const expiresAt = addHours(now, config.sessionTtlHours);
-  store.sessions.push({
-    id: createId('sess'),
-    token,
-    userId: user.id,
-    createdAt: now,
-    expiresAt
-  });
-
-  await writeStore(store);
-  setSessionCookie(res, token, expiresAt);
-
-  return sendJson(res, 200, {
-    authenticated: true,
-    user: {
-      id: user.id,
-      email: user.email,
-      emailVerified: user.emailVerified
+    const user = store.users.find((u) => u.email === email);
+    if (user && !user.passwordHash) {
+      return sendJson(res, 401, {
+        error: {
+          code: 'GOOGLE_ACCOUNT',
+          message: 'Esta cuenta usa acceso con Google. Usa el boton de Google para iniciar sesion.'
+        }
+      });
     }
+    const passwordOk = user ? await verifyPassword(password, user.passwordHash) : false;
+
+    if (!user || !passwordOk) {
+      return sendJson(res, 401, {
+        error: {
+          code: 'INVALID_CREDENTIALS',
+          message: 'Credenciales invalidas'
+        }
+      });
+    }
+
+    if (!user.emailVerified) {
+      return sendJson(res, 403, {
+        error: {
+          code: 'EMAIL_NOT_VERIFIED',
+          message: 'Debes verificar tu correo antes de continuar'
+        },
+        requiresVerification: true,
+        email: user.email
+      });
+    }
+
+    const now = nowIso();
+    const token = createId('session');
+    const expiresAt = addHours(now, config.sessionTtlHours);
+    store.sessions.push({
+      id: createId('sess'),
+      token,
+      userId: user.id,
+      createdAt: now,
+      expiresAt
+    });
+
+    await writeStore(store);
+    setSessionCookie(res, token, expiresAt);
+
+    return sendJson(res, 200, {
+      authenticated: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        emailVerified: user.emailVerified
+      }
+    });
   });
 }
 
@@ -300,79 +321,81 @@ async function handleVerifyEmail(req, res) {
     return badRequest(res, 'VALIDATION_ERROR', 'Correo y codigo son requeridos');
   }
 
-  const store = await readStore();
-  cleanupStore(store);
-  const user = store.users.find((u) => u.email === email);
+  return withStoreWriteLock(async () => {
+    const store = await readStore();
+    cleanupStore(store);
+    const user = store.users.find((u) => u.email === email);
 
-  if (!user) {
-    return sendJson(res, 400, {
-      error: {
-        code: 'INVALID_OR_EXPIRED_CODE',
-        message: 'Codigo invalido o expirado'
-      }
-    });
-  }
-
-  const verification = store.verificationCodes
-    .filter((v) => v.email === email && !v.usedAt)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-
-  if (!verification) {
-    return sendJson(res, 400, {
-      error: {
-        code: 'INVALID_OR_EXPIRED_CODE',
-        message: 'Codigo invalido o expirado'
-      }
-    });
-  }
-
-  if (verification.attempts >= config.maxVerifyAttempts) {
-    return sendJson(res, 429, {
-      error: {
-        code: 'TOO_MANY_ATTEMPTS',
-        message: 'Demasiados intentos. Solicita un nuevo codigo.'
-      }
-    });
-  }
-
-  const matches = hashCode(code) === verification.codeHash;
-  verification.attempts += 1;
-
-  if (!matches) {
-    await writeStore(store);
-    return sendJson(res, 400, {
-      error: {
-        code: 'INVALID_OR_EXPIRED_CODE',
-        message: 'Codigo invalido o expirado'
-      }
-    });
-  }
-
-  verification.usedAt = nowIso();
-  user.emailVerified = true;
-
-  const now = nowIso();
-  const token = createId('session');
-  const expiresAt = addHours(now, config.sessionTtlHours);
-  store.sessions.push({
-    id: createId('sess'),
-    token,
-    userId: user.id,
-    createdAt: now,
-    expiresAt
-  });
-
-  await writeStore(store);
-  setSessionCookie(res, token, expiresAt);
-
-  return sendJson(res, 200, {
-    verified: true,
-    authenticated: true,
-    user: {
-      id: user.id,
-      email: user.email,
-      emailVerified: true
+    if (!user) {
+      return sendJson(res, 400, {
+        error: {
+          code: 'INVALID_OR_EXPIRED_CODE',
+          message: 'Codigo invalido o expirado'
+        }
+      });
     }
+
+    const verification = store.verificationCodes
+      .filter((v) => v.email === email && !v.usedAt)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+    if (!verification) {
+      return sendJson(res, 400, {
+        error: {
+          code: 'INVALID_OR_EXPIRED_CODE',
+          message: 'Codigo invalido o expirado'
+        }
+      });
+    }
+
+    if (verification.attempts >= config.maxVerifyAttempts) {
+      return sendJson(res, 429, {
+        error: {
+          code: 'TOO_MANY_ATTEMPTS',
+          message: 'Demasiados intentos. Solicita un nuevo codigo.'
+        }
+      });
+    }
+
+    const matches = hashCode(code) === verification.codeHash;
+    verification.attempts += 1;
+
+    if (!matches) {
+      await writeStore(store);
+      return sendJson(res, 400, {
+        error: {
+          code: 'INVALID_OR_EXPIRED_CODE',
+          message: 'Codigo invalido o expirado'
+        }
+      });
+    }
+
+    verification.usedAt = nowIso();
+    user.emailVerified = true;
+
+    const now = nowIso();
+    const token = createId('session');
+    const expiresAt = addHours(now, config.sessionTtlHours);
+    store.sessions.push({
+      id: createId('sess'),
+      token,
+      userId: user.id,
+      createdAt: now,
+      expiresAt
+    });
+
+    await writeStore(store);
+    setSessionCookie(res, token, expiresAt);
+
+    return sendJson(res, 200, {
+      verified: true,
+      authenticated: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        emailVerified: true
+      }
+    });
   });
 }
 
@@ -380,91 +403,97 @@ async function handleResendCode(req, res) {
   const body = await parseBody(req);
   const email = sanitizeEmail(body.email);
 
-  const store = await readStore();
-  cleanupStore(store);
-  const user = store.users.find((u) => u.email === email);
+  return withStoreWriteLock(async () => {
+    const store = await readStore();
+    cleanupStore(store);
+    const user = store.users.find((u) => u.email === email);
 
-  if (!user || user.emailVerified) {
+    if (!user || user.emailVerified) {
+      return sendJson(res, 202, {
+        sent: true,
+        resendAfterSeconds: config.resendCooldownSeconds
+      });
+    }
+
+    const latest = store.verificationCodes
+      .filter((v) => v.email === email && !v.usedAt)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+    if (latest && new Date(latest.resendAllowedAt).getTime() > new Date(nowIso()).getTime()) {
+      const diffMs = new Date(latest.resendAllowedAt).getTime() - new Date(nowIso()).getTime();
+      return sendJson(res, 429, {
+        error: {
+          code: 'RATE_LIMITED',
+          message: 'Debes esperar antes de reenviar el codigo',
+          retryAfterSeconds: Math.ceil(diffMs / 1000)
+        }
+      });
+    }
+
+    const code = randomCode(6);
+    const now = nowIso();
+    store.verificationCodes.push({
+      id: createId('verify'),
+      email,
+      codeHash: hashCode(code),
+      createdAt: now,
+      expiresAt: addMinutes(now, config.verificationTtlMinutes),
+      attempts: 0,
+      usedAt: null,
+      resendAllowedAt: addMinutes(now, config.resendCooldownSeconds / 60)
+    });
+
+    await writeStore(store);
+    await sendVerificationCode({ email, code });
+
     return sendJson(res, 202, {
       sent: true,
       resendAfterSeconds: config.resendCooldownSeconds
     });
-  }
-
-  const latest = store.verificationCodes
-    .filter((v) => v.email === email && !v.usedAt)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
-
-  if (latest && new Date(latest.resendAllowedAt).getTime() > new Date(nowIso()).getTime()) {
-    const diffMs = new Date(latest.resendAllowedAt).getTime() - new Date(nowIso()).getTime();
-    return sendJson(res, 429, {
-      error: {
-        code: 'RATE_LIMITED',
-        message: 'Debes esperar antes de reenviar el codigo',
-        retryAfterSeconds: Math.ceil(diffMs / 1000)
-      }
-    });
-  }
-
-  const code = randomCode(6);
-  const now = nowIso();
-  store.verificationCodes.push({
-    id: createId('verify'),
-    email,
-    codeHash: hashCode(code),
-    createdAt: now,
-    expiresAt: addMinutes(now, config.verificationTtlMinutes),
-    attempts: 0,
-    usedAt: null,
-    resendAllowedAt: addMinutes(now, config.resendCooldownSeconds / 60)
-  });
-
-  await writeStore(store);
-  await sendVerificationCode({ email, code });
-
-  return sendJson(res, 202, {
-    sent: true,
-    resendAfterSeconds: config.resendCooldownSeconds
   });
 }
 
 async function handleSession(req, res) {
-  const store = await readStore();
-  cleanupStore(store);
-  const user = findUserBySession(store, req);
+  return withStoreWriteLock(async () => {
+    const store = await readStore();
+    cleanupStore(store);
+    const user = findUserBySession(store, req);
 
-  if (!user) {
-    return sendJson(res, 401, {
-      authenticated: false
-    });
-  }
-
-  await writeStore(store);
-
-  return sendJson(res, 200, {
-    authenticated: true,
-    user: {
-      id: user.id,
-      email: user.email,
-      emailVerified: user.emailVerified
+    if (!user) {
+      return sendJson(res, 401, {
+        authenticated: false
+      });
     }
+
+    await writeStore(store);
+
+    return sendJson(res, 200, {
+      authenticated: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        emailVerified: user.emailVerified
+      }
+    });
   });
 }
 
 async function handleLogout(req, res) {
-  const store = await readStore();
-  cleanupStore(store);
-  const cookies = parseCookies(req.headers.cookie || '');
-  const token = cookies[config.sessionCookieName];
+  return withStoreWriteLock(async () => {
+    const store = await readStore();
+    cleanupStore(store);
+    const cookies = parseCookies(req.headers.cookie || '');
+    const token = cookies[config.sessionCookieName];
 
-  if (token) {
-    store.sessions = store.sessions.filter((s) => s.token !== token);
-    await writeStore(store);
-  }
+    if (token) {
+      store.sessions = store.sessions.filter((s) => s.token !== token);
+      await writeStore(store);
+    }
 
-  clearSessionCookie(res);
-  res.writeHead(204);
-  res.end();
+    clearSessionCookie(res);
+    res.writeHead(204);
+    res.end();
+  });
 }
 
 async function handleGoogleStart(req, res) {
@@ -477,35 +506,37 @@ async function handleGoogleStart(req, res) {
     });
   }
 
-  const store = await readStore();
-  cleanupStore(store);
-  const now = nowIso();
-  const stateToken = createId('gstate');
-  const nonceToken = createId('gnonce');
+  return withStoreWriteLock(async () => {
+    const store = await readStore();
+    cleanupStore(store);
+    const now = nowIso();
+    const stateToken = createId('gstate');
+    const nonceToken = createId('gnonce');
 
-  store.oauthStates = store.oauthStates || [];
-  store.oauthStates.push({
-    id: createId('oauth'),
-    provider: 'google',
-    stateToken,
-    nonceToken,
-    createdAt: now,
-    expiresAt: addMinutes(now, config.oauthStateTtlMinutes),
-    usedAt: null
+    store.oauthStates = store.oauthStates || [];
+    store.oauthStates.push({
+      id: createId('oauth'),
+      provider: 'google',
+      stateToken,
+      nonceToken,
+      createdAt: now,
+      expiresAt: addMinutes(now, config.oauthStateTtlMinutes),
+      usedAt: null
+    });
+    await writeStore(store);
+
+    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    authUrl.searchParams.set('client_id', config.google.clientId);
+    authUrl.searchParams.set('redirect_uri', config.google.redirectUri);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('scope', 'openid email profile');
+    authUrl.searchParams.set('state', stateToken);
+    authUrl.searchParams.set('nonce', nonceToken);
+    authUrl.searchParams.set('prompt', 'select_account');
+
+    res.writeHead(302, { Location: authUrl.toString() });
+    res.end();
   });
-  await writeStore(store);
-
-  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-  authUrl.searchParams.set('client_id', config.google.clientId);
-  authUrl.searchParams.set('redirect_uri', config.google.redirectUri);
-  authUrl.searchParams.set('response_type', 'code');
-  authUrl.searchParams.set('scope', 'openid email profile');
-  authUrl.searchParams.set('state', stateToken);
-  authUrl.searchParams.set('nonce', nonceToken);
-  authUrl.searchParams.set('prompt', 'select_account');
-
-  res.writeHead(302, { Location: authUrl.toString() });
-  res.end();
 }
 
 async function handleGoogleCallback(req, res, requestUrl) {
@@ -526,22 +557,6 @@ async function handleGoogleCallback(req, res, requestUrl) {
       error: {
         code: 'GOOGLE_OAUTH_NOT_CONFIGURED',
         message: 'Google OAuth no esta configurado en el servidor.'
-      }
-    });
-  }
-
-  const store = await readStore();
-  cleanupStore(store);
-
-  const oauthState = (store.oauthStates || []).find(
-    (item) => item.provider === 'google' && item.stateToken === stateToken && !item.usedAt
-  );
-
-  if (!oauthState) {
-    return sendJson(res, 400, {
-      error: {
-        code: 'GOOGLE_STATE_INVALID',
-        message: 'State de Google invalido o expirado.'
       }
     });
   }
@@ -592,81 +607,99 @@ async function handleGoogleCallback(req, res, requestUrl) {
     });
   }
 
-  if (payload.nonce !== oauthState.nonceToken) {
-    return sendJson(res, 400, {
-      error: {
-        code: 'GOOGLE_NONCE_INVALID',
-        message: 'Nonce de Google invalido.'
-      }
-    });
-  }
+  return withStoreWriteLock(async () => {
+    const store = await readStore();
+    cleanupStore(store);
 
-  if (!payload.email_verified) {
-    return sendJson(res, 400, {
-      error: {
-        code: 'GOOGLE_EMAIL_NOT_VERIFIED',
-        message: 'Google reporta correo sin verificar.'
-      }
-    });
-  }
+    const oauthState = (store.oauthStates || []).find(
+      (item) => item.provider === 'google' && item.stateToken === stateToken && !item.usedAt
+    );
 
-  const email = sanitizeEmail(payload.email);
-  let user = store.users.find((u) => u.googleSub && u.googleSub === payload.sub) || null;
-
-  if (!user) {
-    const byEmail = store.users.find((u) => u.email === email) || null;
-    if (byEmail) {
-      if (byEmail.googleSub && byEmail.googleSub !== payload.sub) {
-        return sendJson(res, 409, {
-          error: {
-            code: 'GOOGLE_ACCOUNT_CONFLICT',
-            message: 'Ya existe una cuenta con ese correo y otro identificador de Google.'
-          }
-        });
-      }
-
-      byEmail.googleSub = payload.sub;
-      byEmail.oauthProvider = 'google';
-      byEmail.emailVerified = true;
-      byEmail.displayName = payload.name || byEmail.displayName || null;
-      byEmail.avatarUrl = payload.picture || byEmail.avatarUrl || null;
-      user = byEmail;
+    if (!oauthState) {
+      return sendJson(res, 400, {
+        error: {
+          code: 'GOOGLE_STATE_INVALID',
+          message: 'State de Google invalido o expirado.'
+        }
+      });
     }
-  }
 
-  if (!user) {
-    user = {
-      id: createId('user'),
-      email,
-      passwordHash: null,
-      oauthProvider: 'google',
-      googleSub: payload.sub,
-      displayName: payload.name || null,
-      avatarUrl: payload.picture || null,
-      emailVerified: true,
-      createdAt: nowIso()
-    };
-    store.users.push(user);
-  }
+    if (payload.nonce !== oauthState.nonceToken) {
+      return sendJson(res, 400, {
+        error: {
+          code: 'GOOGLE_NONCE_INVALID',
+          message: 'Nonce de Google invalido.'
+        }
+      });
+    }
 
-  oauthState.usedAt = nowIso();
+    if (!payload.email_verified) {
+      return sendJson(res, 400, {
+        error: {
+          code: 'GOOGLE_EMAIL_NOT_VERIFIED',
+          message: 'Google reporta correo sin verificar.'
+        }
+      });
+    }
 
-  const now = nowIso();
-  const token = createId('session');
-  const expiresAt = addHours(now, config.sessionTtlHours);
-  store.sessions.push({
-    id: createId('sess'),
-    token,
-    userId: user.id,
-    createdAt: now,
-    expiresAt
+    const email = sanitizeEmail(payload.email);
+    let user = store.users.find((u) => u.googleSub && u.googleSub === payload.sub) || null;
+
+    if (!user) {
+      const byEmail = store.users.find((u) => u.email === email) || null;
+      if (byEmail) {
+        if (byEmail.googleSub && byEmail.googleSub !== payload.sub) {
+          return sendJson(res, 409, {
+            error: {
+              code: 'GOOGLE_ACCOUNT_CONFLICT',
+              message: 'Ya existe una cuenta con ese correo y otro identificador de Google.'
+            }
+          });
+        }
+
+        byEmail.googleSub = payload.sub;
+        byEmail.oauthProvider = 'google';
+        byEmail.emailVerified = true;
+        byEmail.displayName = payload.name || byEmail.displayName || null;
+        byEmail.avatarUrl = payload.picture || byEmail.avatarUrl || null;
+        user = byEmail;
+      }
+    }
+
+    if (!user) {
+      user = {
+        id: createId('user'),
+        email,
+        passwordHash: null,
+        oauthProvider: 'google',
+        googleSub: payload.sub,
+        displayName: payload.name || null,
+        avatarUrl: payload.picture || null,
+        emailVerified: true,
+        createdAt: nowIso()
+      };
+      store.users.push(user);
+    }
+
+    oauthState.usedAt = nowIso();
+
+    const now = nowIso();
+    const token = createId('session');
+    const expiresAt = addHours(now, config.sessionTtlHours);
+    store.sessions.push({
+      id: createId('sess'),
+      token,
+      userId: user.id,
+      createdAt: now,
+      expiresAt
+    });
+
+    await writeStore(store);
+    setSessionCookie(res, token, expiresAt);
+
+    res.writeHead(302, { Location: '/' });
+    res.end();
   });
-
-  await writeStore(store);
-  setSessionCookie(res, token, expiresAt);
-
-  res.writeHead(302, { Location: '/' });
-  res.end();
 }
 
 async function handleDownloadExecutable(req, res) {
