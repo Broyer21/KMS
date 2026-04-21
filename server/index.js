@@ -730,6 +730,22 @@ async function handleDownloadExecutable(req, res) {
   }
 }
 
+async function handleDownloadConnectionProfile(req, res) {
+  const profile = {
+    appName: 'Metatinis',
+    apiBaseUrl: config.appOrigin,
+    generatedAt: nowIso()
+  };
+
+  const data = Buffer.from(JSON.stringify(profile, null, 2), 'utf-8');
+  res.writeHead(200, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Disposition': 'attachment; filename="kms-connection-profile.json"',
+    'Content-Length': data.length
+  });
+  res.end(data);
+}
+
 async function serveStatic(requestPath, res) {
   const requestedPath = requestPath === '/' ? '/index.html' : requestPath;
   const normalized = path.posix.normalize(requestedPath);
@@ -772,6 +788,7 @@ async function handler(req, res) {
     if (req.method === 'GET' && pathname === '/api/v1/auth/google/start') return await handleGoogleStart(req, res);
     if (req.method === 'GET' && pathname === '/api/v1/auth/google/callback') return await handleGoogleCallback(req, res, requestUrl);
     if (req.method === 'GET' && pathname === '/api/v1/app/download') return await handleDownloadExecutable(req, res);
+    if (req.method === 'GET' && pathname === '/api/v1/app/download-profile') return await handleDownloadConnectionProfile(req, res);
     if (req.method === 'POST' && pathname === '/api/v1/auth/logout') return await handleLogout(req, res);
 
     return await serveStatic(pathname, res);

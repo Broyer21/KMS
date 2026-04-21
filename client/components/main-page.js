@@ -12,6 +12,37 @@ class MainPage extends HTMLElement {
     this.render();
   }
 
+  extractFileName(contentDisposition, fallbackName) {
+    const raw = String(contentDisposition || '');
+    const utf8Match = raw.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match && utf8Match[1]) {
+      try {
+        return decodeURIComponent(utf8Match[1].replace(/"/g, '').trim());
+      } catch {
+        return utf8Match[1].replace(/"/g, '').trim();
+      }
+    }
+
+    const quotedMatch = raw.match(/filename="([^"]+)"/i);
+    if (quotedMatch && quotedMatch[1]) return quotedMatch[1].trim();
+
+    const plainMatch = raw.match(/filename=([^;]+)/i);
+    if (plainMatch && plainMatch[1]) return plainMatch[1].replace(/"/g, '').trim();
+
+    return fallbackName;
+  }
+
+  triggerDownload(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
   render() {
     this.shadowRoot.innerHTML = `
       <style>
@@ -59,8 +90,9 @@ class MainPage extends HTMLElement {
           <h1>Home principal</h1>
           <p>Sesion iniciada como <strong>${this.email}</strong>.</p>
           <p>Esta es la pantalla placeholder que luego reemplazaremos con la logica principal.</p>
+          <p>La descarga incluye el instalador local y un perfil para conectarlo a este mismo servidor en linea.</p>
           <div class="actions">
-            <button id="download">Descargar aplicacion</button>
+            <button id="download">Descargar instalador local</button>
             <button id="logout">Cerrar sesion</button>
           </div>
           <p id="status" class="status"></p>
@@ -70,23 +102,34 @@ class MainPage extends HTMLElement {
 
     const statusEl = this.shadowRoot.querySelector('#status');
     this.shadowRoot.querySelector('#download').addEventListener('click', async () => {
-      statusEl.textContent = 'Preparando descarga...';
+      statusEl.textContent = 'Preparando instalador y perfil de conexion...';
       try {
         const response = await fetch('/api/v1/app/download', { method: 'GET' });
         if (!response.ok) {
           statusEl.textContent = 'No hay ejecutable disponible para descargar.';
           return;
         }
+
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = 'MetatinisSetup.exe';
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        URL.revokeObjectURL(url);
-        statusEl.textContent = 'Descarga iniciada.';
+        const installerName = this.extractFileName(
+          response.headers.get('content-disposition'),
+          'MetatinisSetup.exe'
+        );
+        this.triggerDownload(blob, installerName);
+
+        const profileResponse = await fetch('/api/v1/app/download-profile', { method: 'GET' });
+        if (profileResponse.ok) {
+          const profileBlob = await profileResponse.blob();
+          const profileName = this.extractFileName(
+            profileResponse.headers.get('content-disposition'),
+            'kms-connection-profile.json'
+          );
+          this.triggerDownload(profileBlob, profileName);
+          statusEl.textContent = 'Descarga iniciada: instalador + perfil de conexion.';
+          return;
+        }
+
+        statusEl.textContent = 'Instalador descargado. No se pudo descargar el perfil de conexion.';
       } catch {
         statusEl.textContent = 'No se pudo iniciar la descarga.';
       }
