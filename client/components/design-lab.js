@@ -3,6 +3,7 @@ class DesignLab extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
     this.storageKey = 'metatinis_theme_mode_v1';
+    this.customColorsKey = 'metatinis_custom_colors_v1';
     this.mode = 'auto';
     this.autoEveryMs = 15000;
     this.franticDurationMs = 3000;
@@ -15,6 +16,23 @@ class DesignLab extends HTMLElement {
     this.nextCycleAt = 0;
     this.franticEndsAt = 0;
     this.runningCycle = false;
+    this.customColors = {};
+
+    this.colorTokens = [
+      { token: '--ui-surface', label: 'Paneles' },
+      { token: '--ui-border', label: 'Bordes' },
+      { token: '--ui-text', label: 'Texto principal' },
+      { token: '--ui-muted', label: 'Texto secundario' },
+      { token: '--ui-primary', label: 'Boton primario' },
+      { token: '--ui-secondary', label: 'Boton secundario' },
+      { token: '--ui-on-primary', label: 'Texto en botones' },
+      { token: '--ui-info-bg', label: 'Fondo info' },
+      { token: '--ui-info-text', label: 'Texto info' },
+      { token: '--ui-error-bg', label: 'Fondo error' },
+      { token: '--ui-error-text', label: 'Texto error' },
+      { token: '--ui-success-bg', label: 'Fondo exito' },
+      { token: '--ui-success-text', label: 'Texto exito' }
+    ];
 
     this.themes = {
       original: {
@@ -146,6 +164,18 @@ class DesignLab extends HTMLElement {
     } catch {
       // Ignore malformed localStorage state.
     }
+
+    try {
+      const rawCustom = window.localStorage.getItem(this.customColorsKey);
+      if (!rawCustom) return;
+      const parsedCustom = JSON.parse(rawCustom);
+      if (!parsedCustom || typeof parsedCustom !== 'object') return;
+      this.customColors = Object.fromEntries(
+        Object.entries(parsedCustom).filter((entry) => /^#[0-9a-fA-F]{6}$/.test(String(entry[1] || '')))
+      );
+    } catch {
+      this.customColors = {};
+    }
   }
 
   saveState() {
@@ -156,6 +186,32 @@ class DesignLab extends HTMLElement {
       maxCycles: this.maxCycles
     };
     window.localStorage.setItem(this.storageKey, JSON.stringify(state));
+  }
+
+  saveCustomColors() {
+    window.localStorage.setItem(this.customColorsKey, JSON.stringify(this.customColors));
+  }
+
+  applyCustomColors() {
+    Object.entries(this.customColors).forEach(([token, value]) => {
+      document.documentElement.style.setProperty(token, value);
+    });
+  }
+
+  setCustomColor(token, value) {
+    if (!/^#[0-9a-fA-F]{6}$/.test(value)) return;
+    this.customColors[token] = value;
+    document.documentElement.style.setProperty(token, value);
+    this.saveCustomColors();
+  }
+
+  clearCustomColors() {
+    this.customColors = {};
+    this.saveCustomColors();
+    if (this.mode === 'light') this.applyTheme('lightGlass');
+    if (this.mode === 'dark') this.applyTheme('darkGlass');
+    if (this.mode === 'auto') this.applyTheme('original');
+    this.render();
   }
 
   startCountdownTicker() {
@@ -206,6 +262,7 @@ class DesignLab extends HTMLElement {
     Object.entries(theme).forEach(([key, value]) => {
       document.documentElement.style.setProperty(key, value);
     });
+    this.applyCustomColors();
   }
 
   randomHexColor() {
@@ -458,6 +515,52 @@ class DesignLab extends HTMLElement {
           opacity: 0.86;
           font-weight: 500;
         }
+
+        .palette {
+          margin: 0;
+          padding: 10px;
+          border-radius: 10px;
+          background: rgba(5, 12, 24, 0.72);
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          display: grid;
+          gap: 7px;
+        }
+
+        .palette h3 {
+          margin: 0;
+          font-size: 0.8rem;
+          color: #e2ebfa;
+        }
+
+        .palette .row {
+          display: grid;
+          grid-template-columns: 1fr 56px;
+          align-items: center;
+          gap: 8px;
+          font-size: 0.75rem;
+          color: #c3d2ec;
+        }
+
+        .palette input[type="color"] {
+          width: 100%;
+          height: 30px;
+          border-radius: 8px;
+          border: 1px solid rgba(200, 214, 236, 0.32);
+          background: rgba(8, 18, 34, 0.8);
+          padding: 2px;
+          cursor: pointer;
+        }
+
+        .palette .reset {
+          border-radius: 8px;
+          border: 1px solid rgba(244, 114, 182, 0.85);
+          background: rgba(168, 49, 106, 0.88);
+          color: #ffffff;
+          min-height: 34px;
+          padding: 6px 8px;
+          font-size: 0.75rem;
+          text-align: center;
+        }
       </style>
 
       <section class="stack">
@@ -489,6 +592,22 @@ class DesignLab extends HTMLElement {
           </label>
           <button id="applyCfg" class="apply">Aplicar</button>
         </section>
+        <section class="palette">
+          <h3>Editor de colores por objeto</h3>
+          ${this.colorTokens
+            .map((item) => {
+              const value = this.customColors[item.token] || this.themes.original[item.token] || '#ffffff';
+              const safeId = item.token.replace(/[^a-z0-9]/gi, '');
+              return `
+                <label class="row" for="${safeId}">
+                  <span>${item.label}</span>
+                  <input id="${safeId}" type="color" data-token="${item.token}" value="${value}" />
+                </label>
+              `;
+            })
+            .join('')}
+          <button id="resetPalette" class="reset">Restablecer colores</button>
+        </section>
         <p class="status" id="statusText">${statusText}</p>
       </section>
     `;
@@ -497,6 +616,14 @@ class DesignLab extends HTMLElement {
     this.shadowRoot.querySelector('#light').addEventListener('click', () => this.activateFixedMode('light'));
     this.shadowRoot.querySelector('#dark').addEventListener('click', () => this.activateFixedMode('dark'));
     this.shadowRoot.querySelector('#applyCfg').addEventListener('click', () => this.applyAutomationSettings());
+    this.shadowRoot.querySelector('#resetPalette').addEventListener('click', () => this.clearCustomColors());
+    this.shadowRoot.querySelectorAll('input[type="color"][data-token]').forEach((input) => {
+      input.addEventListener('input', (event) => {
+        const token = String(event.currentTarget.getAttribute('data-token') || '');
+        const color = String(event.currentTarget.value || '');
+        this.setCustomColor(token, color);
+      });
+    });
     this.refreshDynamicText();
   }
 }
