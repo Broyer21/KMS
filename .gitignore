@@ -9,12 +9,17 @@ node_modules/
 # Runtime and process artifacts
 *.pid
 *.log
+*.pyc
+__pycache__/
 server-dev.log
 server_start.err.log
 server_start.out.log
 temp_server_*.log
 temp_server_*.err.log
 temp_server_*.out.log
+qc
+query
+start
 
 # Local database/runtime files
 .mysql-local-data/
