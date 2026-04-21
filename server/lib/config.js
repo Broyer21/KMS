@@ -17,6 +17,12 @@ function normalizeEmailProvider(value) {
   return ['resend', 'smtp', 'console'].includes(normalized) ? normalized : '';
 }
 
+function normalizeString(value, fallback = '') {
+  if (typeof value !== 'string') return fallback;
+  const normalized = value.trim();
+  return normalized || fallback;
+}
+
 function resolveEmailProvider() {
   const direct = normalizeEmailProvider(process.env.EMAIL_PROVIDER || '');
   if (direct) return direct;
@@ -27,14 +33,14 @@ function resolveEmailProvider() {
 
 const config = {
   port: toInt(process.env.PORT, 3000),
-  appOrigin: process.env.APP_ORIGIN || 'http://localhost:3000',
-  storeMode: (process.env.STORE_MODE || 'mysql').trim().toLowerCase(),
+  appOrigin: normalizeString(process.env.APP_ORIGIN, 'http://localhost:3000'),
+  storeMode: normalizeString(process.env.STORE_MODE, 'mysql').toLowerCase(),
   mysql: {
-    host: process.env.MYSQL_HOST || '127.0.0.1',
+    host: normalizeString(process.env.MYSQL_HOST, '127.0.0.1'),
     port: toInt(process.env.MYSQL_PORT, 3306),
-    user: process.env.MYSQL_USER || 'root',
-    password: process.env.MYSQL_PASSWORD || '',
-    database: process.env.MYSQL_DATABASE || 'metatinis_auth'
+    user: normalizeString(process.env.MYSQL_USER, 'root'),
+    password: normalizeString(process.env.MYSQL_PASSWORD, ''),
+    database: normalizeString(process.env.MYSQL_DATABASE, 'metatinis_auth')
   },
   executablePath: process.env.EXECUTABLE_PATH || '',
   oauthStateTtlMinutes: toInt(process.env.OAUTH_STATE_TTL_MINUTES, 10),

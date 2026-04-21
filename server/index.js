@@ -718,6 +718,12 @@ const server = http.createServer(handler);
 
 async function start() {
   try {
+    if (config.storeMode === 'mysql') {
+      console.log(
+        `[DB config] host=${config.mysql.host} port=${config.mysql.port} user=${config.mysql.user} database=${config.mysql.database} passwordLength=${(config.mysql.password || '').length}`
+      );
+    }
+
     await initializeStore();
     server.listen(config.port, () => {
       console.log(`Server running on http://localhost:${config.port}`);
