@@ -4,6 +4,7 @@ class VerifyEmailForm extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this.loading = false;
     this.email = '';
+    this.code = '';
     this.cooldown = 0;
     this.intervalId = null;
   }
@@ -70,7 +71,7 @@ class VerifyEmailForm extends HTMLElement {
           <input type="email" value="${this.email}" readonly />
         </label>
         <label>Codigo de verificacion
-          <input type="text" name="code" required minlength="6" maxlength="6" inputmode="numeric" />
+          <input type="text" name="code" value="${this.code}" required minlength="6" maxlength="6" inputmode="numeric" />
         </label>
         <div class="actions">
           <button class="verify" ${this.loading ? 'disabled' : ''} type="submit">${this.loading ? 'Verificando...' : 'Verificar y entrar'}</button>
@@ -79,15 +80,23 @@ class VerifyEmailForm extends HTMLElement {
       </form>
     `;
 
+    const codeInput = this.shadowRoot.querySelector('input[name="code"]');
+    codeInput.addEventListener('input', (event) => {
+      const typed = String(event.target.value || '');
+      const sanitized = typed.replace(/\D/g, '').slice(0, 6);
+      this.code = sanitized;
+      if (sanitized !== typed) {
+        event.target.value = sanitized;
+      }
+    });
+
     this.shadowRoot.querySelector('#form').addEventListener('submit', (event) => {
       event.preventDefault();
-      const formData = new FormData(event.currentTarget);
-      const code = String(formData.get('code') || '').trim();
       this.dispatchEvent(
         new CustomEvent('verify-submit', {
           bubbles: true,
           composed: true,
-          detail: { email: this.email, code }
+          detail: { email: this.email, code: this.code }
         })
       );
     });

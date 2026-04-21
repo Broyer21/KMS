@@ -140,12 +140,51 @@ async function handleRegister(req, res) {
   const store = await readStore();
   cleanupStore(store);
 
-  if (store.users.some((u) => u.email === email)) {
-    return sendJson(res, 409, {
-      error: {
-        code: 'EMAIL_ALREADY_EXISTS',
-        message: 'No se pudo completar el registro'
-      }
+  const existingUser = store.users.find((u) => u.email === email);
+
+  if (existingUser) {
+    if (existingUser.emailVerified) {
+      return sendJson(res, 409, {
+        error: {
+          code: 'EMAIL_ALREADY_EXISTS',
+          message: 'No se pudo completar el registro'
+        }
+      });
+    }
+
+    if (existingUser.oauthProvider === 'google' && !existingUser.passwordHash) {
+      return sendJson(res, 409, {
+        error: {
+          code: 'GOOGLE_ACCOUNT',
+          message: 'Este correo ya existe con acceso de Google. Usa el boton de Google para entrar.'
+        }
+      });
+    }
+
+    existingUser.passwordHash = await hashPassword(password);
+
+    const code = randomCode(6);
+    const now = nowIso();
+    store.verificationCodes = store.verificationCodes.filter((v) => v.email !== email || v.usedAt);
+    store.verificationCodes.push({
+      id: createId('verify'),
+      email,
+      codeHash: hashCode(code),
+      createdAt: now,
+      expiresAt: addMinutes(now, config.verificationTtlMinutes),
+      attempts: 0,
+      usedAt: null,
+      resendAllowedAt: addMinutes(now, config.resendCooldownSeconds / 60)
+    });
+
+    await writeStore(store);
+    await sendVerificationCode({ email, code });
+
+    return sendJson(res, 200, {
+      userId: existingUser.id,
+      email,
+      requiresVerification: true,
+      resendAfterSeconds: config.resendCooldownSeconds
     });
   }
 
