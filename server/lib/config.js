@@ -43,6 +43,7 @@ const config = {
     database: normalizeString(process.env.MYSQL_DATABASE, 'metatinis_auth')
   },
   executablePath: process.env.EXECUTABLE_PATH || '',
+  executableUrl: normalizeString(process.env.EXECUTABLE_URL || process.env.EXECUTABLE_DOWNLOAD_URL || '', ''),
   oauthStateTtlMinutes: toInt(process.env.OAUTH_STATE_TTL_MINUTES, 10),
   sessionCookieName: process.env.SESSION_COOKIE_NAME || 'metatinis_session',
   sessionTtlHours: toInt(process.env.SESSION_TTL_HOURS, 24),

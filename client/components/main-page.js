@@ -110,12 +110,29 @@ class MainPage extends HTMLElement {
           return;
         }
 
-        const blob = await response.blob();
-        const installerName = this.extractFileName(
-          response.headers.get('content-disposition'),
-          'MetatinisSetup.exe'
-        );
-        this.triggerDownload(blob, installerName);
+        const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+        if (contentType.includes('application/json')) {
+          const payload = await response.json();
+          if (payload?.downloadUrl) {
+            const directLink = document.createElement('a');
+            directLink.href = payload.downloadUrl;
+            directLink.target = '_blank';
+            directLink.rel = 'noopener';
+            document.body.appendChild(directLink);
+            directLink.click();
+            directLink.remove();
+          } else {
+            statusEl.textContent = 'No hay ejecutable disponible para descargar.';
+            return;
+          }
+        } else {
+          const blob = await response.blob();
+          const installerName = this.extractFileName(
+            response.headers.get('content-disposition'),
+            'MetatinisSetup.exe'
+          );
+          this.triggerDownload(blob, installerName);
+        }
 
         const profileResponse = await fetch('/api/v1/app/download-profile', { method: 'GET' });
         if (profileResponse.ok) {

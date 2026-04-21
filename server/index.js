@@ -721,10 +721,17 @@ async function handleDownloadExecutable(req, res) {
     });
     res.end(data);
   } catch {
+    if (config.executableUrl) {
+      return sendJson(res, 200, {
+        downloadUrl: config.executableUrl,
+        fileName: 'MetatinisSetup.exe'
+      });
+    }
+
     return sendJson(res, 404, {
       error: {
         code: 'EXECUTABLE_NOT_FOUND',
-        message: 'No hay ejecutable disponible para descarga.'
+        message: 'No hay ejecutable disponible para descarga. Configura EXECUTABLE_PATH o EXECUTABLE_URL.'
       }
     });
   }
