@@ -42,9 +42,22 @@ class AuthShell extends HTMLElement {
       this.pendingEmail = data.email;
       this.cooldown = data.resendAfterSeconds || 60;
       this.mode = 'verify';
-      this.setMessage('success', 'Cuenta creada. Revisa tu correo e ingresa el codigo.');
+      if (data.emailDeliveryFailed) {
+        this.setMessage('info', 'La cuenta quedo creada, pero el correo no salio en este intento. Usa Reenviar codigo.');
+      } else {
+        this.setMessage('success', 'Cuenta creada. Revisa tu correo e ingresa el codigo.');
+      }
     } catch (error) {
-      const text = error?.fieldErrors?.[0]?.message || error.message || 'No se pudo crear la cuenta.';
+      let text = error?.fieldErrors?.[0]?.message || error.message || 'No se pudo crear la cuenta.';
+      if (error?.code === 'EMAIL_ALREADY_EXISTS') {
+        text = 'Ese correo ya tiene una cuenta. Inicia sesion con ese correo.';
+      }
+      if (error?.code === 'GOOGLE_ACCOUNT') {
+        text = 'Ese correo ya existe con Google. Usa el boton de Google para iniciar sesion.';
+      }
+      if (error?.code === 'EMAIL_DELIVERY_FAILED') {
+        text = 'No pudimos enviar el correo ahora mismo. Intenta de nuevo en unos segundos.';
+      }
       this.setMessage('error', text);
     } finally {
       this.setLoading(false);

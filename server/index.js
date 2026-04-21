@@ -196,13 +196,20 @@ async function handleRegister(req, res) {
       });
 
       await writeStore(store);
-      await sendVerificationCode({ email, code });
+      let emailDeliveryFailed = false;
+      try {
+        await sendVerificationCode({ email, code });
+      } catch (error) {
+        emailDeliveryFailed = true;
+        console.error('[REGISTER] No se pudo enviar correo de verificacion (usuario existente no verificado):', error.message);
+      }
 
-      return sendJson(res, 200, {
+      return sendJson(res, emailDeliveryFailed ? 202 : 200, {
         userId: existingUser.id,
         email,
         requiresVerification: true,
-        resendAfterSeconds: config.resendCooldownSeconds
+        resendAfterSeconds: config.resendCooldownSeconds,
+        emailDeliveryFailed
       });
     }
 
@@ -236,13 +243,20 @@ async function handleRegister(req, res) {
     });
 
     await writeStore(store);
-    await sendVerificationCode({ email, code });
+    let emailDeliveryFailed = false;
+    try {
+      await sendVerificationCode({ email, code });
+    } catch (error) {
+      emailDeliveryFailed = true;
+      console.error('[REGISTER] No se pudo enviar correo de verificacion (usuario nuevo):', error.message);
+    }
 
-    return sendJson(res, 201, {
+    return sendJson(res, emailDeliveryFailed ? 202 : 201, {
       userId,
       email,
       requiresVerification: true,
-      resendAfterSeconds: config.resendCooldownSeconds
+      resendAfterSeconds: config.resendCooldownSeconds,
+      emailDeliveryFailed
     });
   });
 }
@@ -444,12 +458,21 @@ async function handleResendCode(req, res) {
     });
 
     await writeStore(store);
-    await sendVerificationCode({ email, code });
-
-    return sendJson(res, 202, {
-      sent: true,
-      resendAfterSeconds: config.resendCooldownSeconds
-    });
+    try {
+      await sendVerificationCode({ email, code });
+      return sendJson(res, 202, {
+        sent: true,
+        resendAfterSeconds: config.resendCooldownSeconds
+      });
+    } catch (error) {
+      console.error('[RESEND] No se pudo enviar correo de verificacion:', error.message);
+      return sendJson(res, 502, {
+        error: {
+          code: 'EMAIL_DELIVERY_FAILED',
+          message: 'No pudimos enviar el correo ahora mismo. Intenta de nuevo en unos segundos.'
+        }
+      });
+    }
   });
 }
 
