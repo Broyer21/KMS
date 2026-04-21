@@ -418,16 +418,44 @@ class DesignLab extends HTMLElement {
       <style>
         :host {
           position: fixed;
-          right: 16px;
-          bottom: 16px;
+          right: 12px;
+          bottom: 12px;
           z-index: 9999;
           font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+          width: min(300px, calc(100vw - 24px));
+          max-height: calc(100vh - 24px);
         }
 
         .stack {
           display: grid;
           gap: 8px;
-          width: min(280px, 72vw);
+          width: 100%;
+          max-height: 100%;
+          overflow: auto;
+          padding-right: 2px;
+        }
+
+        .stack::-webkit-scrollbar {
+          width: 8px;
+        }
+
+        .stack::-webkit-scrollbar-thumb {
+          border-radius: 999px;
+          background: rgba(161, 180, 214, 0.45);
+        }
+
+        @media (max-width: 720px) {
+          :host {
+            right: 8px;
+            left: 8px;
+            bottom: 8px;
+            width: auto;
+            max-height: min(84vh, calc(100vh - 16px));
+          }
+
+          .stack {
+            gap: 6px;
+          }
         }
 
         button {
