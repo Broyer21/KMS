@@ -8,7 +8,7 @@ let initPromise;
 const STORE_FILE = path.join(__dirname, '..', '..', 'data', 'store.json');
 
 function isFileStoreMode() {
-	return config.storeMode === 'file' || config.storeMode === 'json';
+	return false;
 }
 
 function normalizeStoreShape(data) {

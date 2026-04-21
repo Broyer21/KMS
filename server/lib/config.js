@@ -34,7 +34,7 @@ function resolveEmailProvider() {
 const config = {
   port: toInt(process.env.PORT, 3000),
   appOrigin: normalizeString(process.env.APP_ORIGIN, 'http://localhost:3000'),
-  storeMode: normalizeString(process.env.STORE_MODE, 'mysql').toLowerCase(),
+  storeMode: 'mysql',
   mysql: {
     host: normalizeString(process.env.MYSQL_HOST, 'mysql.railway.internal'),
     port: toInt(process.env.MYSQL_PORT, 3306),
