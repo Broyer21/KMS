@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime and process artifacts
+*.pid
+*.log
+server-dev.log
+server_start.err.log
+server_start.out.log
+temp_server_*.log
+temp_server_*.err.log
+temp_server_*.out.log
+
+# Local database/runtime files
+.mysql-local-data/
+temp_mysqld.err.log
+mysqld_runtime.pid
+
+# Data that may contain real user records
+data/store.json
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

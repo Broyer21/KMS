@@ -1,0 +1,38 @@
+:root {
+  --ui-bg-a: radial-gradient(circle at 20% 10%, #fffaf1 0%, transparent 45%);
+  --ui-bg-b: radial-gradient(circle at 80% 90%, #d8efe8 0%, transparent 40%);
+  --ui-bg-c: linear-gradient(160deg, #16003a, #000000);
+  --ui-surface: #fffdf9;
+  --ui-border: #dfd1bc;
+  --ui-text: #1e1a14;
+  --ui-muted: #6f6557;
+  --ui-primary: #cc5b2a;
+  --ui-secondary: #0d7a72;
+  --ui-on-primary: #ffffff;
+  --ui-info-text: #1f3b58;
+  --ui-error-text: #7c1f1a;
+  --ui-success-text: #134b2f;
+  --ui-info-bg: #edf5ff;
+  --ui-error-bg: #fdebea;
+  --ui-success-bg: #e9f7ef;
+  --ui-radius: 18px;
+  --ui-shadow: 0 12px 40px rgba(60, 37, 20, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: var(--ui-text);
+  background: var(--ui-bg-a), var(--ui-bg-b), var(--ui-bg-c);
+  transition: background 480ms ease, color 240ms ease;
+}
+
+button,
+input {
+  font: inherit;
+}
