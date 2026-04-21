@@ -36,7 +36,7 @@ const config = {
   appOrigin: normalizeString(process.env.APP_ORIGIN, 'http://localhost:3000'),
   storeMode: 'mysql',
   mysql: {
-    host: normalizeString(process.env.MYSQL_HOST, 'mysql.railway.internal'),
+    host: normalizeString(process.env.MYSQL_HOST, '127.0.0.1'),
     port: toInt(process.env.MYSQL_PORT, 3306),
     user: normalizeString(process.env.MYSQL_USER, 'root'),
     password: normalizeString(process.env.MYSQL_PASSWORD, ''),
