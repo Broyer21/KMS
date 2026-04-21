@@ -98,9 +98,17 @@ class DesignLab extends HTMLElement {
         '--ui-shadow': '0 24px 54px rgba(0, 0, 0, 0.42)'
       }
     };
+
+    this.handleDocumentPointerDown = (event) => {
+      if (!this.isExpanded) return;
+      const path = event.composedPath ? event.composedPath() : [];
+      if (path.includes(this)) return;
+      this.togglePanel(false);
+    };
   }
 
   connectedCallback() {
+    document.addEventListener('pointerdown', this.handleDocumentPointerDown, true);
     this.loadState();
     if (this.mode === 'light') {
       this.activateFixedMode('light');
@@ -114,6 +122,7 @@ class DesignLab extends HTMLElement {
   }
 
   disconnectedCallback() {
+    document.removeEventListener('pointerdown', this.handleDocumentPointerDown, true);
     this.stopAllTimers();
   }
 
