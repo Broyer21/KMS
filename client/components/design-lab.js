@@ -4,7 +4,9 @@ class DesignLab extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this.storageKey = 'metatinis_theme_mode_v1';
     this.customColorsKey = 'metatinis_custom_colors_v1';
+    this.panelStateKey = 'metatinis_design_lab_open_v1';
     this.mode = 'auto';
+    this.isExpanded = false;
     this.autoEveryMs = 15000;
     this.franticDurationMs = 3000;
     this.maxCycles = 5;
@@ -166,6 +168,14 @@ class DesignLab extends HTMLElement {
     }
 
     try {
+      const rawPanel = window.localStorage.getItem(this.panelStateKey);
+      if (rawPanel === '1') this.isExpanded = true;
+      if (rawPanel === '0') this.isExpanded = false;
+    } catch {
+      this.isExpanded = false;
+    }
+
+    try {
       const rawCustom = window.localStorage.getItem(this.customColorsKey);
       if (!rawCustom) return;
       const parsedCustom = JSON.parse(rawCustom);
@@ -190,6 +200,20 @@ class DesignLab extends HTMLElement {
 
   saveCustomColors() {
     window.localStorage.setItem(this.customColorsKey, JSON.stringify(this.customColors));
+  }
+
+  savePanelState() {
+    window.localStorage.setItem(this.panelStateKey, this.isExpanded ? '1' : '0');
+  }
+
+  togglePanel(force) {
+    if (typeof force === 'boolean') {
+      this.isExpanded = force;
+    } else {
+      this.isExpanded = !this.isExpanded;
+    }
+    this.savePanelState();
+    this.render();
   }
 
   applyCustomColors() {
@@ -414,6 +438,54 @@ class DesignLab extends HTMLElement {
     const statusText = this.getStatusText();
     const autoHint = this.getAutoButtonHint();
 
+    const panelContent = `
+      <button id="auto" class="${this.mode === 'auto' ? 'active' : ''}">
+        Modo ciclo (15s + glitch + oscuro)
+        <span class="hint" id="autoHint">${autoHint}</span>
+      </button>
+      <button id="light" class="${this.mode === 'light' ? 'active' : ''}">
+        Modo claro fijo (glass)
+        <span class="hint">Minimalista translúcido, sin cambios automáticos.</span>
+      </button>
+      <button id="dark" class="${this.mode === 'dark' ? 'active' : ''}">
+        Modo oscuro fijo (glass)
+        <span class="hint">Oscuro translúcido, sin cambios automáticos.</span>
+      </button>
+      <section class="config">
+        <h3>Controles de automatizacion</h3>
+        <label class="grid">
+          <span>Evento cada (s)</span>
+          <input id="cfgInterval" type="number" min="5" max="120" step="1" value="${Math.round(this.autoEveryMs / 1000)}" />
+        </label>
+        <label class="grid">
+          <span>Duracion glitch (s)</span>
+          <input id="cfgFrantic" type="number" min="1" max="12" step="1" value="${Math.round(this.franticDurationMs / 1000)}" />
+        </label>
+        <label class="grid">
+          <span>Maximo de ciclos</span>
+          <input id="cfgCycles" type="number" min="1" max="30" step="1" value="${this.maxCycles}" />
+        </label>
+        <button id="applyCfg" class="apply">Aplicar</button>
+      </section>
+      <section class="palette">
+        <h3>Editor de colores por objeto</h3>
+        ${this.colorTokens
+          .map((item) => {
+            const value = this.customColors[item.token] || this.themes.original[item.token] || '#ffffff';
+            const safeId = item.token.replace(/[^a-z0-9]/gi, '');
+            return `
+              <label class="row" for="${safeId}">
+                <span>${item.label}</span>
+                <input id="${safeId}" type="color" data-token="${item.token}" value="${value}" />
+              </label>
+            `;
+          })
+          .join('')}
+        <button id="resetPalette" class="reset">Restablecer colores</button>
+      </section>
+      <p class="status" id="statusText">${statusText}</p>
+    `;
+
     this.shadowRoot.innerHTML = `
       <style>
         :host {
@@ -422,17 +494,76 @@ class DesignLab extends HTMLElement {
           bottom: 12px;
           z-index: 9999;
           font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-          width: min(300px, calc(100vw - 24px));
-          max-height: calc(100vh - 24px);
+          pointer-events: none;
+        }
+
+        .shell {
+          pointer-events: auto;
+          display: grid;
+          justify-items: end;
+          gap: 8px;
+        }
+
+        .toggle {
+          border: 1px solid rgba(255, 255, 255, 0.35);
+          border-radius: 999px;
+          min-height: 42px;
+          padding: 10px 14px;
+          cursor: pointer;
+          font-weight: 700;
+          color: #ffffff;
+          backdrop-filter: blur(8px);
+          background: rgba(19, 27, 42, 0.84);
+          box-shadow: 0 10px 22px rgba(3, 7, 16, 0.35);
+        }
+
+        .panel {
+          width: min(320px, calc(100vw - 24px));
+          max-height: min(82vh, calc(100vh - 24px));
+          border-radius: 14px;
+          border: 1px solid rgba(148, 163, 184, 0.35);
+          background: rgba(7, 14, 27, 0.88);
+          box-shadow: 0 14px 30px rgba(3, 7, 16, 0.45);
+          overflow: hidden;
+          display: ${this.isExpanded ? 'grid' : 'none'};
+          grid-template-rows: auto 1fr;
+        }
+
+        .panelHeader {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 12px;
+          border-bottom: 1px solid rgba(148, 163, 184, 0.28);
+        }
+
+        .panelHeader h2 {
+          margin: 0;
+          color: #e9f1ff;
+          font-size: 0.85rem;
+          letter-spacing: 0.2px;
+        }
+
+        .close {
+          border: 1px solid rgba(255, 255, 255, 0.35);
+          border-radius: 10px;
+          min-height: 30px;
+          padding: 4px 10px;
+          text-align: center;
+          cursor: pointer;
+          font-weight: 700;
+          color: #ffffff;
+          backdrop-filter: blur(8px);
+          background: rgba(23, 33, 52, 0.82);
+          box-shadow: 0 8px 16px rgba(3, 7, 16, 0.25);
         }
 
         .stack {
           display: grid;
           gap: 8px;
-          width: 100%;
-          max-height: 100%;
-          overflow: auto;
-          padding-right: 2px;
+          padding: 10px;
+          overflow-y: auto;
+          overscroll-behavior: contain;
         }
 
         .stack::-webkit-scrollbar {
@@ -449,7 +580,10 @@ class DesignLab extends HTMLElement {
             right: 8px;
             left: 8px;
             bottom: 8px;
-            width: auto;
+          }
+
+          .panel {
+            width: calc(100vw - 16px);
             max-height: min(84vh, calc(100vh - 16px));
           }
 
@@ -591,54 +725,27 @@ class DesignLab extends HTMLElement {
         }
       </style>
 
-      <section class="stack">
-        <button id="auto" class="${this.mode === 'auto' ? 'active' : ''}">
-          Modo ciclo (15s + glitch + oscuro)
-          <span class="hint" id="autoHint">${autoHint}</span>
-        </button>
-        <button id="light" class="${this.mode === 'light' ? 'active' : ''}">
-          Modo claro fijo (glass)
-          <span class="hint">Minimalista translúcido, sin cambios automáticos.</span>
-        </button>
-        <button id="dark" class="${this.mode === 'dark' ? 'active' : ''}">
-          Modo oscuro fijo (glass)
-          <span class="hint">Oscuro translúcido, sin cambios automáticos.</span>
-        </button>
-        <section class="config">
-          <h3>Controles de automatizacion</h3>
-          <label class="grid">
-            <span>Evento cada (s)</span>
-            <input id="cfgInterval" type="number" min="5" max="120" step="1" value="${Math.round(this.autoEveryMs / 1000)}" />
-          </label>
-          <label class="grid">
-            <span>Duracion glitch (s)</span>
-            <input id="cfgFrantic" type="number" min="1" max="12" step="1" value="${Math.round(this.franticDurationMs / 1000)}" />
-          </label>
-          <label class="grid">
-            <span>Maximo de ciclos</span>
-            <input id="cfgCycles" type="number" min="1" max="30" step="1" value="${this.maxCycles}" />
-          </label>
-          <button id="applyCfg" class="apply">Aplicar</button>
+      <section class="shell">
+        <button id="togglePanel" class="toggle">${this.isExpanded ? 'Ocultar editor' : 'Mostrar editor'}</button>
+        <section class="panel" id="panel">
+          <header class="panelHeader">
+            <h2>Editor de interfaz</h2>
+            <button id="closePanel" class="close">Cerrar</button>
+          </header>
+          <section class="stack">
+            ${panelContent}
+          </section>
         </section>
-        <section class="palette">
-          <h3>Editor de colores por objeto</h3>
-          ${this.colorTokens
-            .map((item) => {
-              const value = this.customColors[item.token] || this.themes.original[item.token] || '#ffffff';
-              const safeId = item.token.replace(/[^a-z0-9]/gi, '');
-              return `
-                <label class="row" for="${safeId}">
-                  <span>${item.label}</span>
-                  <input id="${safeId}" type="color" data-token="${item.token}" value="${value}" />
-                </label>
-              `;
-            })
-            .join('')}
-          <button id="resetPalette" class="reset">Restablecer colores</button>
-        </section>
-        <p class="status" id="statusText">${statusText}</p>
       </section>
     `;
+
+    this.shadowRoot.querySelector('#togglePanel').addEventListener('click', () => this.togglePanel());
+
+    if (!this.isExpanded) {
+      return;
+    }
+
+    this.shadowRoot.querySelector('#closePanel').addEventListener('click', () => this.togglePanel(false));
 
     this.shadowRoot.querySelector('#auto').addEventListener('click', () => this.activateAutoMode({ resetCycles: true }));
     this.shadowRoot.querySelector('#light').addEventListener('click', () => this.activateFixedMode('light'));
